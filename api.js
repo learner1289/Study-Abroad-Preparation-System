@@ -1,333 +1,409 @@
-"use strict";
-const path = require("path");
-const fs = require("fs").promises;
-const vm = require("vm");
-const toughCookie = require("tough-cookie");
-const sniffHTMLEncoding = require("html-encoding-sniffer");
-const whatwgURL = require("whatwg-url");
-const whatwgEncoding = require("whatwg-encoding");
-const { URL } = require("whatwg-url");
-const MIMEType = require("whatwg-mimetype");
-const idlUtils = require("./jsdom/living/generated/utils.js");
-const VirtualConsole = require("./jsdom/virtual-console.js");
-const { createWindow } = require("./jsdom/browser/Window.js");
-const { parseIntoDocument } = require("./jsdom/browser/parser");
-const { fragmentSerialization } = require("./jsdom/living/domparsing/serialization.js");
-const ResourceLoader = require("./jsdom/browser/resources/resource-loader.js");
-const NoOpResourceLoader = require("./jsdom/browser/resources/no-op-resource-loader.js");
+/*
+ * Jake JavaScript build tool
+ * Copyright 2112 Matthew Eernisse (mde@fleegix.org)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+*/
+let { uuid } = require('./utils');
 
-class CookieJar extends toughCookie.CookieJar {
-  constructor(store, options) {
-    // jsdom cookie jars must be loose by default
-    super(store, { looseMode: true, ...options });
-  }
-}
+let api = new (function () {
+  /**
+    @name task
+    @static
+    @function
+    @description Creates a Jake Task
+    `
+    @param {String} name The name of the Task
+    @param {Array} [prereqs] Prerequisites to be run before this task
+    @param {Function} [action] The action to perform for this task
+    @param {Object} [opts]
+      @param {Boolean} [opts.asyc=false] Perform this task asynchronously.
+      If you flag a task with this option, you must call the global
+      `complete` method inside the task's action, for execution to proceed
+      to the next task.
 
-const window = Symbol("window");
-let sharedFragmentDocument = null;
-
-class JSDOM {
-  constructor(input = "", options = {}) {
-    const mimeType = new MIMEType(options.contentType === undefined ? "text/html" : options.contentType);
-    const { html, encoding } = normalizeHTML(input, mimeType);
-
-    options = transformOptions(options, encoding, mimeType);
-
-    this[window] = createWindow(options.windowOptions);
-
-    const documentImpl = idlUtils.implForWrapper(this[window]._document);
-
-    options.beforeParse(this[window]._globalProxy);
-
-    parseIntoDocument(html, documentImpl);
-
-    documentImpl.close();
-  }
-
-  get window() {
-    // It's important to grab the global proxy, instead of just the result of `createWindow(...)`, since otherwise
-    // things like `window.eval` don't exist.
-    return this[window]._globalProxy;
-  }
-
-  get virtualConsole() {
-    return this[window]._virtualConsole;
-  }
-
-  get cookieJar() {
-    // TODO NEWAPI move _cookieJar to window probably
-    return idlUtils.implForWrapper(this[window]._document)._cookieJar;
-  }
-
-  serialize() {
-    return fragmentSerialization(idlUtils.implForWrapper(this[window]._document), { requireWellFormed: false });
-  }
-
-  nodeLocation(node) {
-    if (!idlUtils.implForWrapper(this[window]._document)._parseOptions.sourceCodeLocationInfo) {
-      throw new Error("Location information was not saved for this jsdom. Use includeNodeLocations during creation.");
-    }
-
-    return idlUtils.implForWrapper(node).sourceCodeLocation;
-  }
-
-  getInternalVMContext() {
-    if (!vm.isContext(this[window])) {
-      throw new TypeError("This jsdom was not configured to allow script running. " +
-        "Use the runScripts option during creation.");
-    }
-
-    return this[window];
-  }
-
-  reconfigure(settings) {
-    if ("windowTop" in settings) {
-      this[window]._top = settings.windowTop;
-    }
-
-    if ("url" in settings) {
-      const document = idlUtils.implForWrapper(this[window]._document);
-
-      const url = whatwgURL.parseURL(settings.url);
-      if (url === null) {
-        throw new TypeError(`Could not parse "${settings.url}" as a URL`);
-      }
-
-      document._URL = url;
-      document._origin = whatwgURL.serializeURLOrigin(document._URL);
-    }
-  }
-
-  static fragment(string = "") {
-    if (!sharedFragmentDocument) {
-      sharedFragmentDocument = (new JSDOM()).window.document;
-    }
-
-    const template = sharedFragmentDocument.createElement("template");
-    template.innerHTML = string;
-    return template.content;
-  }
-
-  static fromURL(url, options = {}) {
-    return Promise.resolve().then(() => {
-      // Remove the hash while sending this through the research loader fetch().
-      // It gets added back a few lines down when constructing the JSDOM object.
-      const parsedURL = new URL(url);
-      const originalHash = parsedURL.hash;
-      parsedURL.hash = "";
-      url = parsedURL.href;
-
-      options = normalizeFromURLOptions(options);
-
-      const resourceLoader = resourcesToResourceLoader(options.resources);
-      const resourceLoaderForInitialRequest = resourceLoader.constructor === NoOpResourceLoader ?
-        new ResourceLoader() :
-        resourceLoader;
-
-      const req = resourceLoaderForInitialRequest.fetch(url, {
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        cookieJar: options.cookieJar,
-        referrer: options.referrer
-      });
-
-      return req.then(body => {
-        const res = req.response;
-
-        options = Object.assign(options, {
-          url: req.href + originalHash,
-          contentType: res.headers["content-type"],
-          referrer: req.getHeader("referer")
-        });
-
-        return new JSDOM(body, options);
-      });
+    @example
+    desc('This is the default task.');
+    task('default', function (params) {
+      console.log('This is the default task.');
     });
-  }
 
-  static async fromFile(filename, options = {}) {
-    options = normalizeFromFileOptions(filename, options);
-    const buffer = await fs.readFile(filename);
+    desc('This task has prerequisites.');
+    task('hasPrereqs', ['foo', 'bar', 'baz'], function (params) {
+      console.log('Ran some prereqs first.');
+    });
 
-    return new JSDOM(buffer, options);
-  }
-}
-
-function normalizeFromURLOptions(options) {
-  // Checks on options that are invalid for `fromURL`
-  if (options.url !== undefined) {
-    throw new TypeError("Cannot supply a url option when using fromURL");
-  }
-  if (options.contentType !== undefined) {
-    throw new TypeError("Cannot supply a contentType option when using fromURL");
-  }
-
-  // Normalization of options which must be done before the rest of the fromURL code can use them, because they are
-  // given to request()
-  const normalized = { ...options };
-
-  if (options.referrer !== undefined) {
-    normalized.referrer = (new URL(options.referrer)).href;
-  }
-
-  if (options.cookieJar === undefined) {
-    normalized.cookieJar = new CookieJar();
-  }
-
-  return normalized;
-
-  // All other options don't need to be processed yet, and can be taken care of in the normal course of things when
-  // `fromURL` calls `new JSDOM(html, options)`.
-}
-
-function normalizeFromFileOptions(filename, options) {
-  const normalized = { ...options };
-
-  if (normalized.contentType === undefined) {
-    const extname = path.extname(filename);
-    if (extname === ".xhtml" || extname === ".xht" || extname === ".xml") {
-      normalized.contentType = "application/xhtml+xml";
-    }
-  }
-
-  if (normalized.url === undefined) {
-    normalized.url = new URL("file:" + path.resolve(filename));
-  }
-
-  return normalized;
-}
-
-function transformOptions(options, encoding, mimeType) {
-  const transformed = {
-    windowOptions: {
-      // Defaults
-      url: "about:blank",
-      referrer: "",
-      contentType: "text/html",
-      parsingMode: "html",
-      parseOptions: {
-        sourceCodeLocationInfo: false,
-        scriptingEnabled: false
-      },
-      runScripts: undefined,
-      encoding,
-      pretendToBeVisual: false,
-      storageQuota: 5000000,
-
-      // Defaults filled in later
-      resourceLoader: undefined,
-      virtualConsole: undefined,
-      cookieJar: undefined
-    },
-
-    // Defaults
-    beforeParse() { }
+    desc('This is an asynchronous task.');
+    task('asyncTask', function () {
+      setTimeout(complete, 1000);
+    }, {async: true});
+   */
+  this.task = function (name, prereqs, action, opts) {
+    let args = Array.prototype.slice.call(arguments);
+    let createdTask;
+    args.unshift('task');
+    createdTask = jake.createTask.apply(global, args);
+    jake.currentTaskDescription = null;
+    return createdTask;
   };
 
-  // options.contentType was parsed into mimeType by the caller.
-  if (!mimeType.isHTML() && !mimeType.isXML()) {
-    throw new RangeError(`The given content type of "${options.contentType}" was not a HTML or XML content type`);
-  }
-
-  transformed.windowOptions.contentType = mimeType.essence;
-  transformed.windowOptions.parsingMode = mimeType.isHTML() ? "html" : "xml";
-
-  if (options.url !== undefined) {
-    transformed.windowOptions.url = (new URL(options.url)).href;
-  }
-
-  if (options.referrer !== undefined) {
-    transformed.windowOptions.referrer = (new URL(options.referrer)).href;
-  }
-
-  if (options.includeNodeLocations) {
-    if (transformed.windowOptions.parsingMode === "xml") {
-      throw new TypeError("Cannot set includeNodeLocations to true with an XML content type");
-    }
-
-    transformed.windowOptions.parseOptions = { sourceCodeLocationInfo: true };
-  }
-
-  transformed.windowOptions.cookieJar = options.cookieJar === undefined ?
-                                       new CookieJar() :
-                                       options.cookieJar;
-
-  transformed.windowOptions.virtualConsole = options.virtualConsole === undefined ?
-                                            (new VirtualConsole()).sendTo(console) :
-                                            options.virtualConsole;
-
-  if (!(transformed.windowOptions.virtualConsole instanceof VirtualConsole)) {
-    throw new TypeError("virtualConsole must be an instance of VirtualConsole");
-  }
-
-  transformed.windowOptions.resourceLoader = resourcesToResourceLoader(options.resources);
-
-  if (options.runScripts !== undefined) {
-    transformed.windowOptions.runScripts = String(options.runScripts);
-    if (transformed.windowOptions.runScripts === "dangerously") {
-      transformed.windowOptions.parseOptions.scriptingEnabled = true;
-    } else if (transformed.windowOptions.runScripts !== "outside-only") {
-      throw new RangeError(`runScripts must be undefined, "dangerously", or "outside-only"`);
-    }
-  }
-
-  if (options.beforeParse !== undefined) {
-    transformed.beforeParse = options.beforeParse;
-  }
-
-  if (options.pretendToBeVisual !== undefined) {
-    transformed.windowOptions.pretendToBeVisual = Boolean(options.pretendToBeVisual);
-  }
-
-  if (options.storageQuota !== undefined) {
-    transformed.windowOptions.storageQuota = Number(options.storageQuota);
-  }
-
-  return transformed;
-}
-
-function normalizeHTML(html, mimeType) {
-  let encoding = "UTF-8";
-
-  if (ArrayBuffer.isView(html)) {
-    html = Buffer.from(html.buffer, html.byteOffset, html.byteLength);
-  } else if (html instanceof ArrayBuffer) {
-    html = Buffer.from(html);
-  }
-
-  if (Buffer.isBuffer(html)) {
-    encoding = sniffHTMLEncoding(html, {
-      defaultEncoding: mimeType.isXML() ? "UTF-8" : "windows-1252",
-      transportLayerEncodingLabel: mimeType.parameters.get("charset")
+  /**
+    @name rule
+    @static
+    @function
+    @description Creates a Jake Suffix Rule
+    `
+    @param {String} pattern The suffix name of the objective
+    @param {String} source The suffix name of the objective
+    @param {Array} [prereqs] Prerequisites to be run before this task
+    @param {Function} [action] The action to perform for this task
+    @param {Object} [opts]
+      @param {Boolean} [opts.asyc=false] Perform this task asynchronously.
+      If you flag a task with this option, you must call the global
+      `complete` method inside the task's action, for execution to proceed
+      to the next task.
+    @example
+    desc('This is a rule, which does not support namespace or pattern.');
+    rule('.o', '.c', {async: true}, function () {
+      let cmd = util.format('gcc -o %s %s', this.name, this.source);
+      jake.exec([cmd], function () {
+        complete();
+      }, {printStdout: true});
     });
-    html = whatwgEncoding.decode(html, encoding);
-  } else {
-    html = String(html);
-  }
 
-  return { html, encoding };
-}
+    desc('This rule has prerequisites.');
+    rule('.o', '.c', ['util.h'], {async: true}, function () {
+      let cmd = util.format('gcc -o %s %s', this.name, this.source);
+      jake.exec([cmd], function () {
+        complete();
+      }, {printStdout: true});
+    });
 
-function resourcesToResourceLoader(resources) {
-  switch (resources) {
-    case undefined: {
-      return new NoOpResourceLoader();
+    desc('This is a rule with patterns.');
+    rule('%.o', '%.c', {async: true}, function () {
+      let cmd = util.format('gcc -o %s %s', this.name, this.source);
+      jake.exec([cmd], function () {
+        complete();
+      }, {printStdout: true});
+    });
+
+    desc('This is another rule with patterns.');
+    rule('obj/%.o', 'src/%.c', {async: true}, function () {
+      let cmd = util.format('gcc -o %s %s', this.name, this.source);
+      jake.exec([cmd], function () {
+        complete();
+      }, {printStdout: true});
+    });
+
+    desc('This is an example with chain rules.');
+    rule('%.pdf', '%.dvi', {async: true}, function () {
+      let cmd = util.format('dvipdfm %s',this.source);
+      jake.exec([cmd], function () {
+        complete();
+      }, {printStdout: true});
+    });
+
+    rule('%.dvi', '%.tex', {async: true}, function () {
+      let cmd = util.format('latex %s',this.source);
+      jake.exec([cmd], function () {
+        complete();
+      }, {printStdout: true});
+    });
+
+    desc('This rule has a namespace.');
+    task('default', ['debug:obj/main.o]);
+
+    namespace('debug', {async: true}, function() {
+      rule('obj/%.o', 'src/%.c', function () {
+        // ...
+      });
     }
-    case "usable": {
-      return new ResourceLoader();
-    }
-    default: {
-      if (!(resources instanceof ResourceLoader)) {
-        throw new TypeError("resources must be an instance of ResourceLoader");
+   */
+  this.rule = function () {
+    let args = Array.prototype.slice.call(arguments);
+    let arg;
+    let pattern = args.shift();
+    let source = args.shift();
+    let prereqs = [];
+    let action = function () {};
+    let opts = {};
+    let key = pattern.toString(); // May be a RegExp
+
+    while ((arg = args.shift())) {
+      if (typeof arg == 'function') {
+        action = arg;
       }
-      return resources;
+      else if (Array.isArray(arg)) {
+        prereqs = arg;
+      }
+      else {
+        opts = arg;
+      }
     }
-  }
-}
 
-exports.JSDOM = JSDOM;
+    jake.currentNamespace.rules[key] = new jake.Rule({
+      pattern: pattern,
+      source: source,
+      prereqs: prereqs,
+      action: action,
+      opts: opts,
+      desc: jake.currentTaskDescription,
+      ns: jake.currentNamespace
+    });
+    jake.currentTaskDescription = null;
+  };
 
-exports.VirtualConsole = VirtualConsole;
-exports.CookieJar = CookieJar;
-exports.ResourceLoader = ResourceLoader;
+  /**
+    @name directory
+    @static
+    @function
+    @description Creates a Jake DirectoryTask. Can be used as a prerequisite
+    for FileTasks, or for simply ensuring a directory exists for use with a
+    Task's action.
+    `
+    @param {String} name The name of the DiretoryTask
 
-exports.toughCookie = toughCookie;
+    @example
+
+    // Creates the package directory for distribution
+    directory('pkg');
+   */
+  this.directory = function (name) {
+    let args = Array.prototype.slice.call(arguments);
+    let createdTask;
+    args.unshift('directory');
+    createdTask = jake.createTask.apply(global, args);
+    jake.currentTaskDescription = null;
+    return createdTask;
+  };
+
+  /**
+    @name file
+    @static
+    @function
+    @description Creates a Jake FileTask.
+    `
+    @param {String} name The name of the FileTask
+    @param {Array} [prereqs] Prerequisites to be run before this task
+    @param {Function} [action] The action to create this file, if it doesn't
+    exist already.
+    @param {Object} [opts]
+      @param {Array} [opts.asyc=false] Perform this task asynchronously.
+      If you flag a task with this option, you must call the global
+      `complete` method inside the task's action, for execution to proceed
+      to the next task.
+
+   */
+  this.file = function (name, prereqs, action, opts) {
+    let args = Array.prototype.slice.call(arguments);
+    let createdTask;
+    args.unshift('file');
+    createdTask = jake.createTask.apply(global, args);
+    jake.currentTaskDescription = null;
+    return createdTask;
+  };
+
+  /**
+    @name desc
+    @static
+    @function
+    @description Creates a description for a Jake Task (or FileTask,
+    DirectoryTask). When invoked, the description that iscreated will
+    be associated with whatever Task is created next.
+    `
+    @param {String} description The description for the Task
+   */
+  this.desc = function (description) {
+    jake.currentTaskDescription = description;
+  };
+
+  /**
+    @name namespace
+    @static
+    @function
+    @description Creates a namespace which allows logical grouping
+    of tasks, and prevents name-collisions with task-names. Namespaces
+    can be nested inside of other namespaces.
+    `
+    @param {String} name The name of the namespace
+    @param {Function} scope The enclosing scope for the namespaced tasks
+
+    @example
+    namespace('doc', function () {
+      task('generate', ['doc:clobber'], function () {
+        // Generate some docs
+      });
+
+      task('clobber', function () {
+        // Clobber the doc directory first
+      });
+    });
+   */
+  this.namespace = function (name, closure) {
+    let curr = jake.currentNamespace;
+    let ns = curr.childNamespaces[name] || new jake.Namespace(name, curr);
+    let fn = closure || function () {};
+    curr.childNamespaces[name] = ns;
+    jake.currentNamespace = ns;
+    fn();
+    jake.currentNamespace = curr;
+    jake.currentTaskDescription = null;
+    return ns;
+  };
+
+  /**
+    @name complete
+    @static
+    @function
+    @description Completes an asynchronous task, allowing Jake's
+    execution to proceed to the next task. Calling complete globally or without
+    arguments completes the last task on the invocationChain. If you use parallel
+    execution of prereqs this will probably complete a wrong task. You should call this
+    function with this task as the first argument, before the optional return value.
+    Alternatively you can call task.complete()
+    `
+    @example
+    task('generate', ['doc:clobber'], function () {
+      exec('./generate_docs.sh', function (err, stdout, stderr) {
+        if (err || stderr) {
+          fail(err || stderr);
+        }
+        else {
+          console.log(stdout);
+          complete();
+        }
+      });
+    }, {async: true});
+   */
+  this.complete = function (task, val) {
+    //this should detect if the first arg is a task, but I guess it should be more thorough
+    if(task && task. _currentPrereqIndex >=0 ) {
+      task.complete(val);
+    }
+    else {
+      val = task;
+      if(jake._invocationChain.length > 0) {
+        jake._invocationChain[jake._invocationChain.length-1].complete(val);
+      }
+    }
+  };
+
+  /**
+    @name fail
+    @static
+    @function
+    @description Causes Jake execution to abort with an error.
+    Allows passing an optional error code, which will be used to
+    set the exit-code of exiting process.
+    `
+    @param {Error|String} err The error to thow when aborting execution.
+    If this argument is an Error object, it will simply be thrown. If
+    a String, it will be used as the error-message. (If it is a multi-line
+    String, the first line will be used as the Error message, and the
+    remaining lines will be used as the error-stack.)
+
+    @example
+    task('createTests, function () {
+      if (!fs.existsSync('./tests')) {
+        fail('Test directory does not exist.');
+      }
+      else {
+        // Do some testing stuff ...
+      }
+    });
+   */
+  this.fail = function (err, code) {
+    let msg;
+    let errObj;
+    if (code) {
+      jake.errorCode = code;
+    }
+    if (err) {
+      if (typeof err == 'string') {
+        // Use the initial or only line of the error as the error-message
+        // If there was a multi-line error, use the rest as the stack
+        msg = err.split('\n');
+        errObj = new Error(msg.shift());
+        if (msg.length) {
+          errObj.stack = msg.join('\n');
+        }
+        throw errObj;
+      }
+      else if (err instanceof Error) {
+        throw err;
+      }
+      else {
+        throw new Error(err.toString());
+      }
+    }
+    else {
+      throw new Error();
+    }
+  };
+
+  this.packageTask = function (name, version, prereqs, definition) {
+    return new jake.PackageTask(name, version, prereqs, definition);
+  };
+
+  this.publishTask = function (name, prereqs, opts, definition) {
+    return new jake.PublishTask(name, prereqs, opts, definition);
+  };
+
+  // Backward-compat
+  this.npmPublishTask = function (name, prereqs, opts, definition) {
+    return new jake.PublishTask(name, prereqs, opts, definition);
+  };
+
+  this.testTask = function () {
+    let ctor = function () {};
+    let t;
+    ctor.prototype = jake.TestTask.prototype;
+    t = new ctor();
+    jake.TestTask.apply(t, arguments);
+    return t;
+  };
+
+  this.setTaskTimeout = function (t) {
+    this._taskTimeout = t;
+  };
+
+  this.setSeriesAutoPrefix = function (prefix) {
+    this._seriesAutoPrefix = prefix;
+  };
+
+  this.series = function (...args) {
+    let prereqs = args.map((arg) => {
+      let name = (this._seriesAutoPrefix || '') + arg.name;
+      jake.task(name, arg);
+      return name;
+    });
+    let seriesName = uuid();
+    let seriesTask = jake.task(seriesName, prereqs);
+    seriesTask._internal = true;
+    let res = function () {
+      return new Promise((resolve) => {
+        seriesTask.invoke();
+        seriesTask.on('complete', (val) => {
+          resolve(val);
+        });
+      });
+    };
+    Object.defineProperty(res, 'name', {value: uuid(),
+      writable: false});
+    return res;
+  };
+
+})();
+
+module.exports = api;
