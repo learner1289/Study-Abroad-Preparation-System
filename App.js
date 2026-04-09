@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminRoute from './components/AdminRoute';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -11,6 +12,10 @@ import Universities from './pages/Universities';
 import UniversityDetails from './pages/UniversityDetails';
 import Programs from './pages/Programs';
 import Profile from './pages/Profile';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminUsers from './pages/AdminUsers';
+import AdminAnalytics from './pages/AdminAnalytics';
+import ChatBot from './components/ChatBot';
 
 // FIX: AuthProvider must be INSIDE Router so child hooks (useNavigate) work correctly
 function App() {
@@ -31,9 +36,14 @@ function App() {
               <Route path="/universities/:id" element={<ProtectedRoute><UniversityDetails /></ProtectedRoute>} />
               <Route path="/programs" element={<ProtectedRoute><Programs /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+              <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+              <Route path="/admin/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
+              <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </main>
+          {/* Floating AI chatbot — visible to logged-in users on all pages */}
+          <ChatBot />
         </div>
       </AuthProvider>
     </Router>
