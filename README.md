@@ -3,15 +3,18 @@
   <p>A comprehensive, full-stack web platform empowering students to explore universities, academic programs, scholarships, and intake dates across the globe.</p>
 </div>
 
+<br />
+<strong className="block text-center"><a href="(https://studyglobe-system.netlify.app/)"> View Live Demo</a></strong>
+
 ---
 
-## 📖 About the Project
+## About the Project
 
 **StudyGlobe** is an intuitive study abroad preparation system designed to simplify the complex process of international university hunting. It centralizes critical information such as academic programs, language requirements, tuition fees, and scholarship eligibility into a single, user-friendly portal. By providing comprehensive filtering and a centralized dashboard, StudyGlobe minimizes the research overhead for prospective international students.
 
 ---
 
-## 🚀 Technical Stack
+## Technical Stack
 
 The project utilizes a modern web development stack to assure performance, scalability, and security:
 
@@ -24,7 +27,7 @@ The project utilizes a modern web development stack to assure performance, scala
 
 ---
 
-## ✨ Key Features (14 Functional Requirements)
+## Key Features (14 Functional Requirements)
 
 1. **Secure Registration & Authentication:** JWT-based sign-up/sign-in flows backed by Supabase Auth.
 2. **Personalized User Dashboard:** Centralized snapshot of the platform's core offerings upon logging in.
@@ -43,7 +46,7 @@ The project utilizes a modern web development stack to assure performance, scala
 
 ---
 
-## 👥 Meet The Team
+## Meet The Team
 
 This capstone project was conceptualized, designed, and developed by:
 
@@ -53,7 +56,7 @@ This capstone project was conceptualized, designed, and developed by:
 
 ---
 
-## ⚙️ Installation & Setup Guide
+## Installation & Setup Guide
 
 Want to run this project locally? Follow these steps to get a development environment up and running.
 
