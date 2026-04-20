@@ -3,10 +3,9 @@
   <p>A comprehensive, full-stack web platform empowering students to explore universities, academic programs, scholarships, and intake dates across the globe.</p>
 </div>
 
-<br />
-<strong className="block text-center"><a href="(https://studyglobe-system.netlify.app/)"> View Live Demo</a></strong>
-
----
+<div align="center">
+<b>Run the Project Live:</b> https://studyglobe-system.netlify.app/
+</div>
 
 ## About the Project
 
